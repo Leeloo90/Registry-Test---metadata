@@ -48,9 +48,9 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   };
 
   /**
-   * Phase 1: Classification (Gemini 2.0 Flash)
+   * PHASE 1: Shot Type Detection (Gemini 2.0 Flash)
    */
-  const runLightPass = async (file: MediaFile, gcsUri: string) => {
+  const runShotTypeDetection = async (file: MediaFile, gcsUri: string) => {
     const endpoint = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.0-flash-001:generateContent`;
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -60,34 +60,34 @@ export const useForensicSurveyor = (accessToken: string | null) => {
           role: "user", 
           parts: [
             { fileData: { mimeType: file.mime_type, fileUri: gcsUri } }, 
-            { text: "Identify CATEGORY: interview or b-roll. Provide 1-sentence ANALYSIS of visual content." }
+            { text: "Categorize this video. Respond ONLY with the word 'interview' or 'b-roll'." }
           ] 
         }]
       })
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || "Gemini Pass Failed");
+    if (!response.ok) throw new Error(data.error?.message || "Shot Type Detection Failed");
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const isInterview = /interview/i.test(rawText);
+    
     return {
       clip_type: (isInterview ? 'interview' : 'b-roll') as 'interview' | 'b-roll',
-      analysis_content: rawText,
+      analysis_content: `Classified as ${isInterview ? 'Interview' : 'B-Roll'}`,
+      operation_id: 'light_complete',
       last_forensic_stage: 'light' as const
     };
   };
 
   /**
-   * Phase 2: Heavy Pass (Video Intelligence API)
+   * PHASE 2 & 3: Heavy Passes (Video Intelligence API)
+   * Handles both Visual Descriptions and Speech Transcription
    */
-  const runHeavyPass = async (file: MediaFile, gcsUri: string) => {
-    // Treat all Audio files or Interview video files as transcription tasks
-    const isTranscriptionTask = file.mime_type.startsWith('audio/') || file.clip_type === 'interview';
-    
-    const features = isTranscriptionTask 
+  const runHeavyPass = async (file: MediaFile, gcsUri: string, mode: 'b_roll_desc' | 'transcribe') => {
+    const features = mode === 'transcribe' 
       ? ['SPEECH_TRANSCRIPTION'] 
-      : ['SHOT_CHANGE_DETECTION', 'LABEL_DETECTION'];
+      : ['LABEL_DETECTION', 'SHOT_CHANGE_DETECTION'];
 
-    const videoContext = isTranscriptionTask 
+    const videoContext = mode === 'transcribe' 
       ? { speechTranscriptionConfig: { languageCode: 'en-US', enableAutomaticPunctuation: true } }
       : { labelDetectionConfig: { labelDetectionMode: "SHOT_MODE" } };
 
@@ -102,43 +102,43 @@ export const useForensicSurveyor = (accessToken: string | null) => {
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || 'Video Intelligence Error');
-    return data;
+    if (!res.ok) throw new Error(data.error?.message || 'Cloud Analysis Error');
+    return {
+        operation_id: data.name,
+        analysis_content: mode === 'transcribe' ? "Transcribing audio..." : "Analyzing visuals...",
+        last_forensic_stage: 'heavy' as const
+    };
   };
 
   /**
-   * Pipeline Entry: Manages conditional branching for Audio vs Video
+   * Pipeline Entry: Routes based on the Phase Button clicked in the UI
    */
-  const analyzeFile = useCallback(async (file: MediaFile): Promise<Partial<MediaFile>> => {
+  const analyzeFile = useCallback(async (file: MediaFile, phase?: string): Promise<Partial<MediaFile>> => {
     if (!accessToken) throw new Error("Unauthorized");
     setIsAnalyzing(true);
+    
     try {
       await syncToGCS(file);
       const gcsUri = `gs://${BUCKET_NAME}/${file.filename}`;
-      
-      // OPTIMIZATION: Audio files skip Gemini classification and go straight to transcription
-      if (file.mime_type.startsWith('audio/')) {
-        const heavyOp = await runHeavyPass(file, gcsUri);
-        return { 
-          operation_id: heavyOp.name, 
-          analysis_content: "Audio detected: Transcribing...", 
-          clip_type: 'interview', // Set to interview to ensure transcription logic is followed
-          last_forensic_stage: 'heavy' 
-        };
-      }
 
-      // Standard Video Pipeline
-      if (!file.clip_type || file.clip_type === 'unknown') {
-        const lightResult = await runLightPass(file, gcsUri);
-        return { ...lightResult, operation_id: 'light_complete' };
-      }
+      // Routing logic based on the Phase Buttons in App.tsx
+      switch (phase) {
+        case 'shot_type':
+          return await runShotTypeDetection(file, gcsUri);
+        
+        case 'b_roll_desc':
+          return await runHeavyPass(file, gcsUri, 'b_roll_desc');
+        
+        case 'transcribe':
+          return await runHeavyPass(file, gcsUri, 'transcribe');
 
-      const heavyOp = await runHeavyPass(file, gcsUri);
-      return { 
-        operation_id: heavyOp.name, 
-        analysis_content: file.clip_type === 'interview' ? "Transcribing Interview..." : "Mapping Visuals...",
-        last_forensic_stage: 'heavy' 
-      };
+        default:
+          // Fallback logic for the standard "Analyze" button in the table
+          if (file.media_category === 'audio' || file.clip_type === 'interview') {
+            return await runHeavyPass(file, gcsUri, 'transcribe');
+          }
+          return await runShotTypeDetection(file, gcsUri);
+      }
     } catch (err: any) {
       console.error("[Surveyor] Pipeline Error:", err);
       return { analysis_content: `Error: ${err.message}`, operation_id: 'error' };
@@ -165,6 +165,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
         return { done: true, content: formatTranscriptionResults(results) };
     }
     
+    // Fallback for visual labels (B-Roll Analysis)
     const labels = results?.[0]?.segmentLabelAnnotations?.map((l: any) => l.entity.description).join(", ");
     return { done: true, content: `Visual Labels: ${labels || 'None'}` };
   }, [accessToken]);

@@ -3,16 +3,16 @@ import { MediaFile } from '../types';
 
 interface MediaTableProps {
   files: MediaFile[];
-  onAnalyze: (file: MediaFile) => Promise<void>;
   onCheckStatus: (file: MediaFile) => Promise<void>;
+  onShowDetails: (file: MediaFile) => Promise<void>;
   isAnalyzing: boolean;
   activeId: string | null;
 }
 
 export const MediaTable: React.FC<MediaTableProps> = ({ 
   files, 
-  onAnalyze, 
   onCheckStatus, 
+  onShowDetails,
   isAnalyzing,
   activeId
 }) => {
@@ -60,7 +60,7 @@ export const MediaTable: React.FC<MediaTableProps> = ({
       <div className="p-6 border-b border-slate-100 bg-slate-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Media Registry</h2>
-          <p className="text-xs text-slate-500 font-medium">Lazy-Load Forensic Pipeline</p>
+          <p className="text-xs text-slate-500 font-medium tracking-tight uppercase">Right-click for technical metadata</p>
         </div>
         <div className="relative">
           <input
@@ -82,8 +82,8 @@ export const MediaTable: React.FC<MediaTableProps> = ({
             <tr className="bg-slate-50/50 text-slate-500 uppercase text-[10px] font-bold tracking-widest border-b border-slate-100">
               <th className="px-6 py-4">Asset Info</th>
               <th className="px-6 py-4">Classification</th>
-              <th className="px-6 py-4">Intelligence Content</th>
-              <th className="px-6 py-4">Pipeline Action</th>
+              <th className="px-6 py-4">Forensic Intel</th>
+              <th className="px-6 py-4">Pipeline Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
@@ -99,14 +99,17 @@ export const MediaTable: React.FC<MediaTableProps> = ({
                 
                 // State detection based on operation_id
                 const isHeavyProcessing = !!file.operation_id && 
-                                           file.operation_id.includes('projects/') && 
+                                           file.operation_id.includes('operations/') && 
                                            file.operation_id !== 'completed';
                 
-                const isLightComplete = file.operation_id === 'light_complete' || file.clip_type !== 'unknown';
                 const isFullyComplete = file.operation_id === 'completed';
 
                 return (
-                  <tr key={file.drive_id} className="hover:bg-indigo-50/20 transition-colors group">
+                  <tr 
+                    key={file.drive_id} 
+                    onContextMenu={(e) => { e.preventDefault(); onShowDetails(file); }}
+                    className={`transition-colors group cursor-context-menu ${isActive ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}`}
+                  >
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-4">
                         <div className={`p-2.5 rounded-xl ${
@@ -121,7 +124,7 @@ export const MediaTable: React.FC<MediaTableProps> = ({
                         <div>
                           <p className="text-sm font-semibold text-slate-800 truncate max-w-xs">{file.filename}</p>
                           <p className="text-[10px] font-mono text-slate-400 mt-0.5 uppercase tracking-tighter">
-                            {formatSize(file.size_bytes)} • {file.duration ? `${Math.round(file.duration)}s` : 'N/A'}
+                            {formatSize(file.size_bytes)} • {file.duration ? `${Math.round(file.duration / 1000)}s` : 'Processing...'}
                           </p>
                         </div>
                       </div>
@@ -159,7 +162,9 @@ export const MediaTable: React.FC<MediaTableProps> = ({
                                 </p>
                             </div>
                           ) : (
-                            <p className="text-xs text-slate-400 italic">No forensic data found.</p>
+                            <p className="text-xs text-slate-400 italic">
+                                {isActive ? 'Processing in current Phase...' : 'Pending Phase Trigger...'}
+                            </p>
                           )}
                         </div>
 
@@ -181,29 +186,17 @@ export const MediaTable: React.FC<MediaTableProps> = ({
                       {isHeavyProcessing ? (
                         <div className="flex flex-col gap-2 min-w-[140px] items-end">
                           <div className="flex items-center gap-2 text-[10px] font-bold text-indigo-600 uppercase">
-                            <span className="animate-pulse">Phase 2: Deep Pass</span>
+                            <span className="animate-pulse">Analyzing...</span>
                           </div>
-                          <div className="h-1.5 w-32 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                          <div className="h-1 w-24 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
                             <div className="h-full bg-indigo-500 animate-progress-buffer w-full"></div>
                           </div>
-                          <button onClick={() => onCheckStatus(file)} className="text-[9px] text-slate-400 hover:text-indigo-600 underline">Refresh Status</button>
+                          <button onClick={() => onCheckStatus(file)} className="text-[9px] text-slate-400 hover:text-indigo-600 underline">Refresh</button>
                         </div>
                       ) : (
-                        <button 
-                          onClick={() => onAnalyze(file)}
-                          disabled={isAnalyzing}
-                          className={`text-[10px] font-bold px-5 py-2.5 rounded-xl transition-all shadow-sm active:scale-95 disabled:bg-slate-100 disabled:text-slate-400 min-w-[130px] ${
-                            isFullyComplete ? 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50' :
-                            isLightComplete ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200' :
-                            'bg-indigo-600 text-white hover:bg-indigo-700'
-                          }`}
-                        >
-                          {isActive ? 'Processing...' : (
-                            isFullyComplete ? 'Re-Run Deep' : 
-                            isLightComplete ? 'Run Deep Pass' : 
-                            'Start Forensic'
-                          )}
-                        </button>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                            {isFullyComplete ? 'Forensic Ready' : (isActive ? 'Running...' : 'Idle')}
+                        </span>
                       )}
                     </td>
                   </tr>
