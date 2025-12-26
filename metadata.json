@@ -1,0 +1,8 @@
+{
+  "name": "Story Graph Media Registry",
+  "description": "A discovery tool to index Google Drive media folders into a local IndexedDB registry for seamless media management.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
