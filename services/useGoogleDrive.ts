@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { GOOGLE_CONFIG } from '../config'; // This looks for 'export const GOOGLE_CONFIG'
+import { GOOGLE_CONFIG } from '../config'; 
 import { GoogleUser } from '../types';
 
 declare global {
@@ -9,22 +9,52 @@ declare global {
   }
 }
 
+/**
+ * Updated Scopes: 
+ * We include 'cloud-platform' to grant the access token permission to call 
+ * Gemini 1.5 Flash via Vertex AI.
+ */
+const SCOPES = [
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/cloud-platform' // REQUIRED for Gemini/Vertex
+].join(' ');
+
 export const useGoogleDrive = () => {
   const [user, setUser] = useState<GoogleUser | null>(null);
   const [isGapiLoaded, setIsGapiLoaded] = useState(false);
   const [isGsiLoaded, setIsGsiLoaded] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
     const handleGapiLoad = () => {
       window.gapi.load('client:picker', async () => {
-        await window.gapi.client.init({
-          apiKey: GOOGLE_CONFIG.API_KEY,
-          discoveryDocs: GOOGLE_CONFIG.DISCOVERY_DOCS,
-        });
-        setIsGapiLoaded(true);
+        try {
+          // Initialize with Drive and Video Intelligence Discovery Docs
+          await window.gapi.client.init({
+            apiKey: GOOGLE_CONFIG.API_KEY,
+            discoveryDocs: GOOGLE_CONFIG.DISCOVERY_DOCS,
+          });
+          console.log("[GAPI] Client initialized with Cloud Video & Drive features.");
+          setIsGapiLoaded(true);
+        } catch (error: any) {
+          console.error("[GAPI] Init Error:", error);
+          
+          // Fallback if specific discovery docs fail
+          try {
+            await window.gapi.client.init({
+              apiKey: GOOGLE_CONFIG.API_KEY,
+              discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+            });
+            setIsGapiLoaded(true);
+          } catch (fallbackError) {
+            setInitError("Critical Google Service Failure.");
+          }
+        }
       });
     };
 
+    // Library Loading Checks
     const interval = setInterval(() => {
       if (window.gapi) {
         clearInterval(interval);
@@ -45,14 +75,18 @@ export const useGoogleDrive = () => {
     };
   }, []);
 
+  /**
+   * Updated Login:
+   * Uses the joined SCOPES string including Vertex AI permissions.
+   */
   const login = useCallback(() => {
     if (!isGsiLoaded) return;
     const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CONFIG.CLIENT_ID,
-      scope: GOOGLE_CONFIG.SCOPES,
+      scope: SCOPES, 
       callback: (response: any) => {
         if (response.access_token) {
-          console.log("[Auth] Token received.");
+          console.log("[Auth] Token received with Cloud & Drive privileges.");
           setUser({ accessToken: response.access_token });
         }
       },
@@ -93,28 +127,46 @@ export const useGoogleDrive = () => {
       const currentId = queue.shift()!;
       let pageToken: string | undefined = undefined;
 
-      do {
-        const response = await window.gapi.client.drive.files.list({
-          q: `'${currentId}' in parents and trashed = false`,
-          fields: 'nextPageToken, files(id, name, md5Checksum, size, mimeType)',
-          pageToken: pageToken
-        });
+      try {
+        do {
+          const response = await window.gapi.client.drive.files.list({
+            q: `'${currentId}' in parents and trashed = false`,
+            fields: 'nextPageToken, files(id, name, md5Checksum, size, mimeType, videoMediaMetadata)',
+            pageToken: pageToken
+          });
 
-        const files = response.result.files || [];
-        for (const file of files) {
-          if (file.mimeType === 'application/vnd.google-apps.folder') {
-            queue.push(file.id);
-          } else if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/') || file.mimeType.startsWith('image/')) {
-            console.log(`[Registry] Found Asset: ${file.name}`);
-            onFileFound(file);
-            processedCount++;
-            onProgress(processedCount);
+          const files = response.result.files || [];
+          for (const file of files) {
+            if (file.mimeType === 'application/vnd.google-apps.folder') {
+              queue.push(file.id);
+            } else if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/')) {
+              // Extract duration for temporal sampling in Gemini
+              const duration = file.videoMediaMetadata?.durationMillis 
+                ? parseInt(file.videoMediaMetadata.durationMillis) / 1000 
+                : 0;
+
+              onFileFound({
+                ...file,
+                duration 
+              });
+              processedCount++;
+              onProgress(processedCount);
+            }
           }
-        }
-        pageToken = response.result.nextPageToken;
-      } while (pageToken);
+          pageToken = response.result.nextPageToken;
+        } while (pageToken);
+      } catch (err) {
+        console.error("[Drive] Error listing files:", err);
+      }
     }
   }, [user]);
 
-  return { user, login, openPicker, fetchFilesRecursively, isReady: isGapiLoaded && isGsiLoaded };
+  return { 
+    user, 
+    login, 
+    openPicker, 
+    fetchFilesRecursively, 
+    isReady: isGapiLoaded && isGsiLoaded,
+    initError 
+  };
 };
