@@ -10,7 +10,8 @@ export const GOOGLE_CONFIG = {
   SCOPES: [
     "https://www.googleapis.com/auth/drive.metadata.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/cloud-platform", // Required for Video Intelligence & Speech APIs
-    "https://www.googleapis.com/auth/devstorage.full_control" // Required for mirroring Drive to GCS
+    "https://www.googleapis.com/auth/cloud-platform",          // For Gemini & general GCP access
+    "https://www.googleapis.com/auth/devstorage.full_control", // For GCS mirroring
+    "https://www.googleapis.com/auth/video.transcoder"        // NEW: Explicit permission for proxy generation
   ].join(' ')
 };

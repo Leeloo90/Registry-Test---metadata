@@ -3,9 +3,11 @@ import { MediaFile } from '../types';
 
 export const useForensicSurveyor = (accessToken: string | null) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  // CONFIGURATION SYNC: Must match your Cloud Run index.js
   const BUCKET_NAME = "story-graph-proxies";
   const PROJECT_ID = "media-sync-registry";
-  const LOCATION = "us-central1";
+  const LOCATION = "europe-west1"; // Updated from us-central1 to match Dispatcher
 
   /**
    * Helper: Formats transcription results from Video Intelligence API
@@ -23,21 +25,28 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
   /**
    * Mirroring Stage: Drive -> GCS
+   * This is the "Bridge" that allows the Transcoder to see your files.
    */
   const syncToGCS = async (file: MediaFile) => {
     const encodedName = encodeURIComponent(file.filename);
+    
+    // 1. Check if it already exists to save bandwidth
     const checkRes = await fetch(
       `https://storage.googleapis.com/storage/v1/b/${BUCKET_NAME}/o/${encodedName}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     if (checkRes.ok) return;
 
+    console.log(`%c[Surveyor] Mirroring to GCS: ${file.filename}`, "color: #6366f1;");
+
+    // 2. Fetch from Drive and stream to GCS
     const driveRes = await fetch(
       `https://www.googleapis.com/drive/v3/files/${file.drive_id}?alt=media`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const blob = await driveRes.blob();
-    await fetch(
+    
+    const uploadRes = await fetch(
       `https://storage.googleapis.com/upload/storage/v1/b/${BUCKET_NAME}/o?uploadType=media&name=${encodedName}`,
       {
         method: 'POST',
@@ -45,13 +54,17 @@ export const useForensicSurveyor = (accessToken: string | null) => {
         body: blob
       }
     );
+
+    if (!uploadRes.ok) throw new Error("Mirroring to GCS failed. Check Bucket CORS.");
   };
 
   /**
    * PHASE 1: Shot Type Detection (Gemini 2.0 Flash)
+   * Now running in europe-west1 to match the bucket data.
    */
   const runShotTypeDetection = async (file: MediaFile, gcsUri: string) => {
     const endpoint = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.0-flash-001:generateContent`;
+    
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -65,8 +78,10 @@ export const useForensicSurveyor = (accessToken: string | null) => {
         }]
       })
     });
+    
     const data = await response.json();
     if (!response.ok) throw new Error(data.error?.message || "Shot Type Detection Failed");
+    
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const isInterview = /interview/i.test(rawText);
     
@@ -80,7 +95,6 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
   /**
    * PHASE 2 & 3: Heavy Passes (Video Intelligence API)
-   * Handles both Visual Descriptions and Speech Transcription
    */
   const runHeavyPass = async (file: MediaFile, gcsUri: string, mode: 'b_roll_desc' | 'transcribe') => {
     const features = mode === 'transcribe' 
@@ -103,6 +117,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'Cloud Analysis Error');
+    
     return {
         operation_id: data.name,
         analysis_content: mode === 'transcribe' ? "Transcribing audio..." : "Analyzing visuals...",
@@ -111,17 +126,17 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   };
 
   /**
-   * Pipeline Entry: Routes based on the Phase Button clicked in the UI
+   * Pipeline Entry
    */
   const analyzeFile = useCallback(async (file: MediaFile, phase?: string): Promise<Partial<MediaFile>> => {
     if (!accessToken) throw new Error("Unauthorized");
     setIsAnalyzing(true);
     
     try {
+      // 1. Ensure file is in GCS before trying any AI or Transcoding
       await syncToGCS(file);
       const gcsUri = `gs://${BUCKET_NAME}/${file.filename}`;
 
-      // Routing logic based on the Phase Buttons in App.tsx
       switch (phase) {
         case 'shot_type':
           return await runShotTypeDetection(file, gcsUri);
@@ -133,7 +148,6 @@ export const useForensicSurveyor = (accessToken: string | null) => {
           return await runHeavyPass(file, gcsUri, 'transcribe');
 
         default:
-          // Fallback logic for the standard "Analyze" button in the table
           if (file.media_category === 'audio' || file.clip_type === 'interview') {
             return await runHeavyPass(file, gcsUri, 'transcribe');
           }
@@ -148,7 +162,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   }, [accessToken]);
 
   /**
-   * Polling Logic: Retrieves results from background cloud operations
+   * Polling Logic
    */
   const getAnalysisResult = useCallback(async (operationId: string) => {
     if (!accessToken || ['light_complete', 'error', 'completed'].includes(operationId)) return null;
@@ -165,7 +179,6 @@ export const useForensicSurveyor = (accessToken: string | null) => {
         return { done: true, content: formatTranscriptionResults(results) };
     }
     
-    // Fallback for visual labels (B-Roll Analysis)
     const labels = results?.[0]?.segmentLabelAnnotations?.map((l: any) => l.entity.description).join(", ");
     return { done: true, content: `Visual Labels: ${labels || 'None'}` };
   }, [accessToken]);
