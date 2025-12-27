@@ -5,13 +5,13 @@ export const GOOGLE_CONFIG = {
     "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
     "https://videointelligence.googleapis.com/$discovery/rest?version=v1",
     "https://storage.googleapis.com/$discovery/rest?v1",
-    "https://speech.googleapis.com/$discovery/rest?version=v1" 
+    "https://speech.googleapis.com/$discovery/rest?version=v1" // Explicitly used for the STT sampling logic
   ],
   SCOPES: [
     "https://www.googleapis.com/auth/drive.metadata.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/cloud-platform",          // For Gemini & general GCP access
-    "https://www.googleapis.com/auth/devstorage.full_control", // For GCS mirroring
-    "https://www.googleapis.com/auth/video.transcoder"        // NEW: Explicit permission for proxy generation
+    "https://www.googleapis.com/auth/cloud-platform",          // Essential for Gemini and Speech-to-Text
+    "https://www.googleapis.com/auth/devstorage.full_control", // Required for mirroring and reading audio proxies
+    "https://www.googleapis.com/auth/video.transcoder"         // Required for generating the AAC/MP4 proxies
   ].join(' ')
 };
