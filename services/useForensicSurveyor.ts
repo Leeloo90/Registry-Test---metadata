@@ -63,37 +63,41 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   /**
    * SMPTE TECH PASS: Focused exclusively on Embedded Timecode
    */
-  const runTechPass = async (file: MediaFile) => {
-    try {
-      const response = await fetch(METADATA_SERVICE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.filename }) 
-      });
+  /**
+ * SMPTE TECH PASS: Focused exclusively on Embedded Timecode
+ */
+const runTechPass = async (file: MediaFile) => {
+  try {
+    const response = await fetch(METADATA_SERVICE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.filename }) 
+    });
 
-      if (!response.ok) throw new Error("Metadata Service Failed");
+    if (!response.ok) throw new Error("Metadata Service Failed");
 
-      const metadata = await response.json(); 
+    const metadata = await response.json(); 
 
-      // Streamlined to focus on SMPTE Start TC
-      return {
-        tech_metadata: {
-          start_tc: metadata.start_tc || "00:00:00:00",
-          // Placeholders for types.ts compatibility
-          codec_id: metadata.codec_id || '',
-          width: metadata.width || 0,
-          height: metadata.height || 0,
-          frame_rate_fraction: metadata.frame_rate_fraction || '25/1',
-          total_frames: metadata.total_frames || '0'
-        },
-        analysis_content: `SMPTE TC: ${metadata.start_tc}`,
-        operation_id: 'completed',
-        last_forensic_stage: 'tech' as const
-      };
-    } catch (err: any) {
-      return { analysis_content: `Error: ${err.message}`, operation_id: 'error' };
-    }
-  };
+    console.log('[Tech Pass] Received metadata:', metadata);
+
+    // Return complete metadata from MediaInfo
+    return {
+      tech_metadata: {
+        start_tc: metadata.start_tc || "00:00:00:00",
+        codec_id: metadata.codec_id || 'Unknown',
+        width: metadata.width || 0,
+        height: metadata.height || 0,
+        frame_rate_fraction: metadata.frame_rate_fraction || '25.000',  // ✓ FIXED
+        total_frames: metadata.total_frames || '0'
+      },
+      analysis_content: `SMPTE TC: ${metadata.start_tc} | FPS: ${metadata.frame_rate_fraction}`,
+      operation_id: 'completed',
+      last_forensic_stage: 'tech' as const
+    };
+  } catch (err: any) {
+    return { analysis_content: `Error: ${err.message}`, operation_id: 'error' };
+  }
+};
 
   /**
    * LIGHTWEIGHT DISCOVERY: Gemini 2.0 Flash

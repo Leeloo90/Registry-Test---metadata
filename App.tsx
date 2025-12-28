@@ -234,8 +234,14 @@ const App: React.FC = () => {
   };
 
   const handleExportXML = () => {
-    const xml = generateXML(registryFiles, "StoryGraph_Multicam_Sync");
-    downloadXML(xml, "StoryGraph_Final_Sync.xml");
+    try {
+      const xml = generateXML(registryFiles, "StoryGraph_Multicam_Sync");
+      downloadXML(xml, "StoryGraph_Final_Sync.xml");
+    } catch (err: any) {
+      // This will catch the "Framerate Mismatch" error and show it as an alert
+      alert(err.message);
+      console.error("[XML Export] Failed:", err.message);
+    }
   };
 
   const framesToTimecode = (totalFrames: number, fileFPS: string = "25") => {
