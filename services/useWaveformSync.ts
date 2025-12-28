@@ -53,25 +53,21 @@ export const useWaveformSync = (accessToken: string | null) => {
    * Scan small buffers to find the point of highest mathematical similarity.
    */
   const calculateOffset = (masterBuffer: AudioBuffer, slaveBuffer: AudioBuffer) => {
-    // CHANNEL STRATEGY: We force Channel 0 (the first track) for comparison.
-    // This avoids memory issues with professional 8+ channel field recordings.
     const masterData = masterBuffer.getChannelData(0);
     const slaveData = slaveBuffer.getChannelData(0);
     const sampleRate = masterBuffer.sampleRate;
 
-    // Scan up to the first 60 seconds for a match
-    const scanWindow = Math.min(masterData.length, slaveData.length, sampleRate * 60);
+    // INCREASE SCAN: Scan up to 30 minutes if necessary
+    const scanWindow = Math.min(masterData.length - 2000, sampleRate * 1800); 
     let bestOffset = 0;
     let maxCorrelation = -Infinity;
 
-    // Optimized scanning every 50th sample to save CPU
-    for (let offset = 0; offset < scanWindow; offset += 50) {
+    // ACCURACY: Scanning every 50th sample is fast, but for 4K sync, 
+    // every 20th sample provides better frame-accuracy.
+    for (let offset = 0; offset < scanWindow; offset += 20) {
       let correlation = 0;
-      // Sliding window comparison
       for (let i = 0; i < 2000; i++) {
-        if (masterData[i + offset] && slaveData[i]) {
-            correlation += masterData[i + offset] * slaveData[i];
-        }
+        correlation += masterData[i + offset] * slaveData[i];
       }
       if (correlation > maxCorrelation) {
         maxCorrelation = correlation;

@@ -9,7 +9,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   const PROJECT_ID = "media-sync-registry";
   const LOCATION = "europe-west1"; 
   
-  // NEW: The URL for your dedicated Metadata Extractor Service
+  // Dedicated Metadata Extractor Service URL
   const METADATA_SERVICE_URL = "https://metadata-extractor-286149224994.europe-west1.run.app";
 
   /**
@@ -28,7 +28,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
   /**
    * Mirroring Stage: Drive -> GCS
-   * Required for Gemini, Transcoder, Video Intelligence, AND FFprobe to access the files.
+   * Required for AI and FFprobe to access the files.
    */
   const syncToGCS = async (file: MediaFile) => {
     const encodedName = encodeURIComponent(file.filename);
@@ -61,8 +61,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   };
 
   /**
-   * TECH PASS: Calls the Cloud Run Metadata Extractor (FFprobe)
-   * This retrieves the "Ground Truth" for XML Sync (Start TC, Frame Rate, etc.)
+   * SMPTE TECH PASS: Focused exclusively on Embedded Timecode
    */
   const runTechPass = async (file: MediaFile) => {
     try {
@@ -76,9 +75,18 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
       const metadata = await response.json(); 
 
+      // Streamlined to focus on SMPTE Start TC
       return {
-        tech_metadata: metadata,
-        analysis_content: `[Tech Spec] TC: ${metadata.start_tc} | FPS: ${metadata.frame_rate_fraction} | Res: ${metadata.width}x${metadata.height}`,
+        tech_metadata: {
+          start_tc: metadata.start_tc || "00:00:00:00",
+          // Placeholders for types.ts compatibility
+          codec_id: metadata.codec_id || '',
+          width: metadata.width || 0,
+          height: metadata.height || 0,
+          frame_rate_fraction: metadata.frame_rate_fraction || '25/1',
+          total_frames: metadata.total_frames || '0'
+        },
+        analysis_content: `SMPTE TC: ${metadata.start_tc}`,
         operation_id: 'completed',
         last_forensic_stage: 'tech' as const
       };
@@ -89,7 +97,6 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
   /**
    * LIGHTWEIGHT DISCOVERY: Gemini 2.0 Flash
-   * This handles both Video categorization and Audio discovery.
    */
   const runGeminiDiscovery = async (file: MediaFile, gcsUri: string) => {
     const endpoint = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.0-flash-001:generateContent`;
@@ -104,8 +111,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
           role: "user", 
           parts: [
             { fileData: { mimeType: mimeType, fileUri: gcsUri } }, 
-            { text: `Analyze the audio and visuals of this clip. Is this an 'interview' (talking head, structured speech, Q&A) or 'location_sound' (ambient noise, wind, background chatter, B-roll)? 
-                     Respond ONLY with the word 'interview' or 'location_sound'.` }
+            { text: `Analyze the audio and visuals of this clip. Is this an 'interview' or 'location_sound'? Respond ONLY with 'interview' or 'location_sound'.` }
           ] 
         }]
       })
@@ -119,7 +125,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
     
     return {
       clip_type: (isInterview ? 'interview' : 'b-roll') as 'interview' | 'b-roll',
-      analysis_content: `Discovery: ${isInterview ? 'Interview Detected' : 'Location Sound'}`,
+      analysis_content: `Discovery: ${isInterview ? 'Interview' : 'B-Roll'}`,
       operation_id: 'light_complete',
       last_forensic_stage: 'light' as const
     };
@@ -127,13 +133,9 @@ export const useForensicSurveyor = (accessToken: string | null) => {
 
   /**
    * HEAVY PASS: Video Intelligence API
-   * Used for deep B-Roll mapping or full time-coded transcription.
    */
   const runHeavyPass = async (file: MediaFile, gcsUri: string, mode: 'b_roll_desc' | 'transcribe') => {
-    const features = mode === 'transcribe' 
-      ? ['SPEECH_TRANSCRIPTION'] 
-      : ['LABEL_DETECTION', 'SHOT_CHANGE_DETECTION'];
-
+    const features = mode === 'transcribe' ? ['SPEECH_TRANSCRIPTION'] : ['LABEL_DETECTION', 'SHOT_CHANGE_DETECTION'];
     const videoContext = mode === 'transcribe' 
       ? { speechTranscriptionConfig: { languageCode: 'en-US', enableAutomaticPunctuation: true } }
       : { labelDetectionConfig: { labelDetectionMode: "SHOT_MODE" } };
@@ -141,11 +143,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
     const res = await fetch(`https://videointelligence.googleapis.com/v1/videos:annotate`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        inputUri: gcsUri,
-        features: features,
-        videoContext: videoContext
-      })
+      body: JSON.stringify({ inputUri: gcsUri, features, videoContext })
     });
 
     const data = await res.json();
@@ -153,7 +151,7 @@ export const useForensicSurveyor = (accessToken: string | null) => {
     
     return {
         operation_id: data.name,
-        analysis_content: mode === 'transcribe' ? "Transcribing audio..." : "Analyzing visuals...",
+        analysis_content: mode === 'transcribe' ? "Transcribing..." : "Analyzing...",
         last_forensic_stage: 'heavy' as const
     };
   };
@@ -166,28 +164,19 @@ export const useForensicSurveyor = (accessToken: string | null) => {
     setIsAnalyzing(true);
     
     try {
-      // 1. All files are mirrored to GCS as the first step
       await syncToGCS(file);
       const rawUri = `gs://${BUCKET_NAME}/${file.filename}`;
 
-      // 2. Route based on the requested phase
       switch (phase) {
-        case 'tech_specs': // NEW: Phase 0 Trigger
+        case 'tech_specs': // Phase 0 Trigger
           return await runTechPass(file);
-
         case 'audio_discovery':
         case 'shot_type':
-          // Phase 1: Quick categorical check via Gemini
           return await runGeminiDiscovery(file, rawUri);
-        
         case 'b_roll_desc':
-          // Phase 2: Visual mapping via Video Intelligence
           return await runHeavyPass(file, rawUri, 'b_roll_desc');
-        
         case 'transcribe':
-          // Phase 4: Full word-for-word text record
           return await runHeavyPass(file, rawUri, 'transcribe');
-
         default:
           return await runGeminiDiscovery(file, rawUri);
       }
@@ -200,10 +189,9 @@ export const useForensicSurveyor = (accessToken: string | null) => {
   }, [accessToken]);
 
   /**
-   * Polling Logic: Checks the status of "Heavy Pass" operations
+   * Polling Logic for Long-Running Tasks
    */
   const getAnalysisResult = useCallback(async (operationId: string) => {
-    // Avoid polling for quick tasks or errors
     if (!accessToken || ['light_complete', 'error', 'completed'].includes(operationId)) return null;
 
     const res = await fetch(`https://videointelligence.googleapis.com/v1/${operationId}`, { 
@@ -214,15 +202,11 @@ export const useForensicSurveyor = (accessToken: string | null) => {
     if (!data.done) return { done: false };
 
     const results = data.response.annotationResults;
-    
-    // Check if result is transcription
     if (results?.[0]?.speechTranscriptions) {
         return { done: true, content: formatTranscriptionResults(results) };
     }
-    
-    // Otherwise return visual labels
     const labels = results?.[0]?.segmentLabelAnnotations?.map((l: any) => l.entity.description).join(", ");
-    return { done: true, content: `Visual Labels: ${labels || 'None'}` };
+    return { done: true, content: `Labels: ${labels || 'None'}` };
   }, [accessToken]);
 
   return { analyzeFile, getAnalysisResult, isAnalyzing };

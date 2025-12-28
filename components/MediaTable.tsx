@@ -22,20 +22,19 @@ export const MediaTable: React.FC<MediaTableProps> = ({
    * Generates a .txt forensic report for download.
    */
   const handleDownloadTxt = (file: MediaFile) => {
-    if (!file.analysis_content) return;
+    if (!file.analysis_content && !file.tech_metadata) return;
     
     const element = document.createElement("a");
     const header = `STORY GRAPH FORENSIC REPORT\n`;
-    const subHeader = `Asset: ${file.filename}\nCategory: ${file.media_category}\nType: ${file.clip_type}\nStage: ${file.last_forensic_stage || 'N/A'}\nDate: ${new Date().toLocaleString()}\n`;
+    const subHeader = `Asset: ${file.filename}\nCategory: ${file.media_category}\nType: ${file.clip_type}\nDate: ${new Date().toLocaleString()}\n`;
     const separator = `------------------------------------------\n\n`;
     
-    // Include Tech Specs in the report if available
     let techHeader = "";
     if (file.tech_metadata) {
-      techHeader = `TECHNICAL METADATA:\nStart TC: ${file.tech_metadata.start_tc}\nFrame Rate: ${file.tech_metadata.frame_rate_fraction}\nResolution: ${file.tech_metadata.width}x${file.tech_metadata.height}\nTotal Frames: ${file.tech_metadata.total_frames}\n\n`;
+      techHeader = `EMBEDDED SMPTE TRUTH:\nStart TC: ${file.tech_metadata.start_tc}\n\n`;
     }
 
-    const fileContent = header + subHeader + techHeader + separator + file.analysis_content;
+    const fileContent = header + subHeader + techHeader + separator + (file.analysis_content || "No AI analysis performed.");
     const textFile = new Blob([fileContent], { type: 'text/plain' });
     element.href = URL.createObjectURL(textFile);
     const baseName = file.filename.substring(0, file.filename.lastIndexOf('.')) || file.filename;
@@ -66,7 +65,7 @@ export const MediaTable: React.FC<MediaTableProps> = ({
       <div className="p-6 border-b border-slate-100 bg-slate-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Media Registry</h2>
-          <p className="text-xs text-slate-500 font-medium tracking-tight uppercase">Right-click for technical metadata</p>
+          <p className="text-xs text-slate-500 font-medium tracking-tight uppercase">SMPTE Timecode Tracking Active</p>
         </div>
         <div className="relative">
           <input
@@ -88,7 +87,7 @@ export const MediaTable: React.FC<MediaTableProps> = ({
             <tr className="bg-slate-50/50 text-slate-500 uppercase text-[10px] font-bold tracking-widest border-b border-slate-100">
               <th className="px-6 py-4">Asset Info</th>
               <th className="px-6 py-4">Classification</th>
-              <th className="px-6 py-4">Forensic Intel</th>
+              <th className="px-6 py-4">Embedded SMPTE Truth</th>
               <th className="px-6 py-4 text-right">Pipeline Status</th>
             </tr>
           </thead>
@@ -102,13 +101,7 @@ export const MediaTable: React.FC<MediaTableProps> = ({
             ) : (
               filteredFiles.map((file) => {
                 const isActive = activeId === file.drive_id;
-                
-                // State detection based on operation_id
-                const isHeavyProcessing = !!file.operation_id && 
-                                           file.operation_id.includes('operations/') && 
-                                           file.operation_id !== 'completed';
-                
-                const isFullyComplete = file.operation_id === 'completed';
+                const isFullyComplete = file.operation_id === 'completed' || file.last_forensic_stage === 'tech';
 
                 return (
                   <tr 
@@ -130,7 +123,7 @@ export const MediaTable: React.FC<MediaTableProps> = ({
                         <div>
                           <p className="text-sm font-semibold text-slate-800 truncate max-w-xs">{file.filename}</p>
                           <p className="text-[10px] font-mono text-slate-400 mt-0.5 uppercase tracking-tighter">
-                            {formatSize(file.size_bytes)} • {file.duration ? `${Math.round(file.duration / 1000)}s` : 'Processing...'}
+                            {formatSize(file.size_bytes)}
                           </p>
                         </div>
                       </div>
@@ -152,79 +145,38 @@ export const MediaTable: React.FC<MediaTableProps> = ({
                     </td>
 
                     <td className="px-6 py-4">
-                      <div className="flex flex-col gap-3 max-w-md">
-                        {/* 1. TECH SPECS BADGE AREA (New Phase 0 Data) */}
-                        {file.tech_metadata && (
-                            <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-slate-100 border-dashed">
-                                <span className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-100 w-fit">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                    TC: {file.tech_metadata.start_tc}
-                                </span>
-                                <span className="text-[9px] text-slate-500 font-mono bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
-                                    {file.tech_metadata.frame_rate_fraction} fps
-                                </span>
-                                <span className="text-[9px] text-slate-500 font-mono bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
-                                    {file.tech_metadata.width}x{file.tech_metadata.height}
-                                </span>
-                            </div>
-                        )}
-
-                        {/* 2. AI ANALYSIS CONTENT (Existing Phases) */}
-                        <div className="flex items-start gap-3">
-                            <div className="flex-1 min-h-[40px]">
-                            {file.analysis_content ? (
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className={`text-[8px] font-bold uppercase px-1 rounded ${
-                                            file.last_forensic_stage === 'heavy' ? 'bg-green-100 text-green-700' : 
-                                            file.last_forensic_stage === 'tech' ? 'bg-emerald-100 text-emerald-700' :
-                                            'bg-indigo-100 text-indigo-700'
-                                        }`}>
-                                            {file.last_forensic_stage || 'AI Summary'}
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-slate-600 italic line-clamp-3 leading-relaxed">
-                                        "{file.analysis_content}"
-                                    </p>
-                                </div>
-                            ) : (
-                                <p className="text-xs text-slate-400 italic">
-                                    {isActive ? 'Processing in current Phase...' : 'Pending Phase Trigger...'}
-                                </p>
-                            )}
-                            </div>
-
-                            {(isFullyComplete || file.tech_metadata) && (
+                      <div className="flex items-center gap-4">
+                        {file.tech_metadata?.start_tc ? (
+                          <div className="flex items-center gap-3">
+                            <span className="flex items-center gap-2 text-sm font-mono font-bold text-emerald-700 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200 shadow-sm">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                              {file.tech_metadata.start_tc}
+                            </span>
+                            
                             <button 
                                 onClick={() => handleDownloadTxt(file)}
-                                className="flex-shrink-0 p-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors border border-indigo-100"
-                                title="Download TXT Report"
+                                className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition-all border border-slate-200"
+                                title="Download Tech Report"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                 </svg>
                             </button>
-                            )}
-                        </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-400 italic">
+                            {isActive ? 'Extracting SMPTE track...' : 'Ready for Phase 0'}
+                          </p>
+                        )}
                       </div>
                     </td>
 
                     <td className="px-6 py-4 text-right">
-                      {isHeavyProcessing ? (
-                        <div className="flex flex-col gap-2 min-w-[140px] items-end">
-                          <div className="flex items-center gap-2 text-[10px] font-bold text-indigo-600 uppercase">
-                            <span className="animate-pulse">Analyzing...</span>
-                          </div>
-                          <div className="h-1 w-24 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-                            <div className="h-full bg-indigo-500 animate-progress-buffer w-full"></div>
-                          </div>
-                          <button onClick={() => onCheckStatus(file)} className="text-[9px] text-slate-400 hover:text-indigo-600 underline">Refresh</button>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-                            {isFullyComplete || file.last_forensic_stage === 'tech' ? 'Forensic Ready' : (isActive ? 'Running...' : 'Idle')}
-                        </span>
-                      )}
+                      <span className={`text-[10px] font-bold uppercase tracking-tighter ${
+                        isFullyComplete ? 'text-emerald-600' : isActive ? 'text-indigo-600 animate-pulse' : 'text-slate-400'
+                      }`}>
+                          {isFullyComplete ? 'Forensic Ready' : isActive ? 'Probing...' : 'Idle'}
+                      </span>
                     </td>
                   </tr>
                 );
